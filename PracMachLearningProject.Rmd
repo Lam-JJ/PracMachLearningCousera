@@ -1,0 +1,147 @@
+---
+title: "Practical Machine Learning Project"
+author: "JJ"
+date: "10/22/2020"
+output: html_document
+---
+# Pratical Machine Learning Project
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+By analyzing the accelerometers data on forearm, arm, belt and dumbbell from 6 different participant. They were asked to perform barbell lifts both correctly once and incorrectly 5 different ways. 
+
+```{r lib, include=FALSE}
+# Load library
+library(caret)
+library(dplyr)
+library(corrplot)
+library(rpart)
+library(rattle)
+library(glmnet)
+library(Hmisc)
+
+setwd("C:/Users/User/Desktop/Studies/Data Science/part 10/PracMachLearningCousera")
+```
+
+## Data Import
+Import data from CSV files and filter out accelerometers variable that are non-trivial. The "classe" variable is the outcome that we trying to predict.
+
+```{r load}
+# Load data
+trainCSV <- read.csv("pml-training.csv",header=T)
+testCSV <- read.csv("pml-testing.csv",header=T)
+
+# Filter acceleration datas and classe
+trainSet <- trainCSV %>% select(contains("accel"),classe) %>% select(-contains("var"))
+testing <- testCSV %>% select(contains("accel")) %>% select(-contains("var")) 
+trainSet$classe <- as.factor(trainSet$classe)
+```
+
+## Data Splitting
+To get out-of-sample error, the trainSet is split into a training set and a validation set, with 75% propotion into the training set. 
+
+```{r split}
+# Create seperation
+set.seed(123)
+inTrain = createDataPartition(trainSet$classe, p = 3/4)[[1]]
+training <- trainSet[inTrain,]
+validation <- trainSet[-inTrain,]
+```
+
+## Exploratory Analysis
+Some simple figure or chart to grasp the variable and how correlated the variables from one another.
+
+```{r corr,echo=FALSE}
+featurePlot(x=training[,c("total_accel_belt","total_accel_arm",
+                          "total_accel_dumbbell","total_accel_forearm")],
+            y=training$classe,
+            plot="density")
+
+res <- cor(subset(training,select=-c(classe)))
+corrplot(res, type = "upper")
+```
+
+## Cross Validation
+K-fold cross validation with k=5 is used to save some computing times. 
+
+```{r kfold}
+# Cross Validation [ k fold with k = 5 ]
+control <- trainControl(method = "cv",number = 5)
+```
+
+## Prediction Algorithm
+We explored few different methods used for classification model to predict the outcome.
+
+## Decision Tree 
+Here, we used the function rpart() to perform a data tree structure analysis. Its not necessary to transform data for non-linear models.
+
+```{r decision,cache=TRUE,fig.width=10,fig.height=10}
+modelTree <- rpart(classe~.,data = training,method="class")
+predTree <- predict(modelTree,validation,type="class")
+accTree <- confusionMatrix(predTree,validation$classe)$overall[1]
+accTree
+
+fancyRpartPlot(modelTree)
+```
+
+## Boosting Model
+Boosting involves taking weak predictors, weight and add them up to get a overall stronger predictor. 
+
+```{r boost,cache = TRUE}
+modelGBM <- train(classe~., data = training, method = "gbm", 
+                  trControl = control, verbose = FALSE, preProcess=c("center","scale"))
+predGBM <- predict(modelGBM,validation)
+accGBM <- confusionMatrix(predGBM,validation$classe)$overall[1]
+accGBM
+```
+
+## K-Nearest Neighbour
+To put it simply, K-nearest neighbour model that choose the nearest neighbour for the predictor. It will be used in tandem with K-fold cross validation.
+
+```{r KNN,cache = TRUE}
+modelKNN <- train(classe~., data = training, method = "knn", trControl = control, 
+                    preProcess = c("center","scale"),tuneLength=20)
+predKNN <- predict(modelKNN,validation)
+accKNN <- confusionMatrix(predKNN,validation$classe)$overall[1]
+accKNN
+```
+
+## Random Forest
+Random forests are an ensemble learning method for classification, by contructing a multitude decision tress. 
+
+```{r RF, cache = TRUE}
+modelRF <- train(classe~., data = training, method = "rf", trControl = control)
+predRF <- predict(modelRF,validation)
+accRF <- confusionMatrix(predRF,validation$classe)$overall[1]
+accRF
+```
+
+## Combining Classifier
+By combining classifier, it can improves accuracy even with simple blending which is useful.
+
+```{r comb,cache = TRUE}
+predDF <- data.frame(predGBM,predKNN,predRF,classe=validation$classe)
+modelComb <- train(classe~.,method="rf",data=predDF)
+predComb <- predict(modelComb,predDF)
+accComb <- confusionMatrix(predComb,validation$classe)$overall[1]
+accComb
+```
+
+## Discussion
+With the few models that were tested, Random Forest proved to be best in terms of accuracy of 0.95, and out-of-sample error of 0.05. Although combining classifier doesnt seems to improve the accuracy, we would like to include it into our final model.
+
+## Prediction on Testing Set
+We now perform prediction with KNN, GBM and RF model on the testing set, and combined them for the final prediction for testing set.
+
+```{r test,cache = TRUE}
+testGBM <- predict(modelGBM,testing)
+testKNN <- predict(modelKNN,testing)
+testRF <- predict(modelRF,testing)
+testDF <- data.frame(predGBM=testGBM,predKNN=testKNN,predRF=testRF)
+
+testComb <- predict(modelComb,testDF)
+testComb
+```
+
+According to the quiz, we scored 19/20, or 95%, which is an coincidence with our prediction accuracy of our prediction model.
+
